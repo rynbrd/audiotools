@@ -109,7 +109,7 @@ class FlacMeta
 end
 
 def get_mime(file)
-	mime = %x[file -b --mime-type #{file}]
+	mime = %x[file -b --mime-type "#{file}"]
 	if $?.to_i == 0
 		mime.strip!
 		return mime
@@ -296,7 +296,7 @@ def clear_flac(file)
 end
 
 def clear_id3(file)
-	id3 = ruby::Tag.new(file)
+	id3 = ID3Lib::Tag.new(file)
 	id3.strip!
 end
 
@@ -330,7 +330,7 @@ def update_flac(file, tags, artwork)
 end
 
 def update_id3(file, tags, artwork, version)
-	id3 = ruby::Tag.new(file)
+	id3 = ID3Lib::Tag.new(file)
 	tags.keys.each do |key|
 		case key
 		when :artist then id3.artist = tags[key]
@@ -351,8 +351,7 @@ def update_id3(file, tags, artwork, version)
 			$stderr.puts "Image file not readable: %s" % [art[:image]]
 			exit 1
 		end
-		mime = %x[file -b --mime-type #{art[:image]}]
-		mime.strip!
+		mime = get_mime(art[:image])
 		if mime != 'image/jpeg' and mime != 'image/png'
 			$stderr.puts "Invalid image format: %s" % [mime]
 			exit 1

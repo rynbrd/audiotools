@@ -10,9 +10,9 @@ fi
 # usage: find_tool BIN
 # Output the full path to a binary.
 find_tool() {
-	TOOL=$((realpath "${1}" 2> /dev/null) || (whereis "${1}" | sed -e "s/^${1}:[ ]*//g" -e "s/ .*$//g"))
+	TOOL=$((realpath "$(dirname "${0}")/${1}" 2> /dev/null) || (whereis "${1}" | sed -e "s/^${1}:[ ]*//g" -e "s/ .*$//g"))
 	if [ "x${TOOL}" == "x" ]; then
-		echo "could not find ${1}" >&2
+		echo "Could not find ${1}." >&2
 		return 1
 	fi
 	echo ${TOOL}
@@ -39,7 +39,7 @@ get_album_file() {
 	get_album_info "${1}" "FILE" | sed -e 's/^[ ]*"//g' -e 's/"[ ]\+WAVE[ ]*$//g'
 }
 
-# usage: get_album_performer CUEFILE
+# usage: get_album_artist CUEFILE
 # Get album artist from a cue file.
 get_album_artist() {
 	get_album_info "${1}" "PERFORMER" | sed -e 's/^[ ]*"//g' -e 's/"[ ]*$//g'
@@ -55,6 +55,18 @@ get_album_title() {
 # Get album genre from a cue file.
 get_album_genre() {
 	get_album_info "${1}" "REM GENRE"
+}
+
+# usage: get_album_year CUEFILE
+# Get album year from a cue file.
+get_album_year() {
+	get_album_info "${1}" "REM DATE"
+}
+
+# usage: get_album_disc CUEFILE
+# Get the album disc number.
+get_album_disc() {
+	get_album_disc "${1}" "REM DISC"
 }
 
 # usage: get_album_tracks CUEFILE
@@ -88,6 +100,7 @@ get_track_info() {
 		return 1
 	fi
 
+	OLDIFS=$IFS
 	IFS=""
 	READ=0
 	NEXT=$((${TRACK}+1))
@@ -102,10 +115,12 @@ get_track_info() {
 			INFO=$(echo "${LINE}" | egrep "^[ ]{4}${3} ")
 			if [ $? -eq 0 ]; then
 				echo ${INFO} | sed "s/^[ ]\{4\}${3}[ ]*//g"
+				IFS=$OLDIFS
 				return 0
 			fi
 		fi
 	done
+	IFS=$OLDIFS
 }
 
 # usage: get_track_performer CUEFILE TRACKNUM
