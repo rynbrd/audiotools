@@ -1,0 +1,129 @@
+#!/bin/sh
+#
+# usage: dearchive CUEFILE LIBRARY
+# A tool for de-archiving a cue/flac file pair into a music library.
+
+. $(dirname $0)/track-tools
+
+if [ "x${1}" == "x" ] || [ "x${2}" == "x" ]; then
+	echo "usage: $(basename $0) cuefile library" >&2
+	echo "De-archives a cue/flac file pair into a music library." >&2
+	exit 1
+fi
+
+die() {
+	echo "${1}" >&2
+	exit 1
+}
+
+test -e "${1}" || die "Can't find cue file: ${1}"
+test -e "${2}" || die "Can't find library path: ${2}"
+
+HERE=$(pwd)
+CUE=$(realpath "${1}")
+LIBRARY=$(realpath "${2}")
+TMP="${HERE}/dearchive-tmp"
+mkdir -p "${TMP}" || die "Failed to create temporary directory: ${TMP}"
+
+# usage: split CUE
+split() {
+	FILE="$(dirname "${1}")/$(get_album_file "${1}")"
+	test -e "${FILE}" || die "Archive file not found: ${FILE}"
+	pushd "$(pwd)" &> /dev/null
+	cd "${TMP}"
+	get_track_times "${1}" | split_tracks "${FILE}"
+	test $? -eq 0 || exit 1
+	popd
+}
+
+# usage: encode WAV
+encode() {
+	OPTS="-V2 --quiet"
+	TOOL=$(find_tool lame)
+	test $? -eq 0 || exit 1
+	DIR=$(dirname "${1}")
+	BASE=$(basename "${1}" | sed "s/\.wav$//g")
+	FILE="${BASE}.mp3"
+	${TOOL} ${OPTS} "${1}" "${DIR}/${FILE}" >&2
+	test $? -eq 0 || die "Failed to encode file: ${1}"
+	echo ${FILE}
+	return 0
+}
+
+# usage: tag CUE TRACKNUM TRACKFILE
+tag() {
+	TOOL=$(find_tool tagger)
+	test $? -eq 0 || exit 1
+
+	DIR=$(dirname "${1}")
+	BASE=$(basename "${1}" | sed "s/\.[^\.]\+$//g")
+	EXT=$(echo "${3}" | sed "s/^.*\.//g")
+
+	ALBUM=$(get_album_title "${1}")
+	DISC=$(get_album_disc "${1}")
+	GENRE=$(get_album_genre "${1}")
+	YEAR=$(get_album_year "${1}")
+	ARTIST=$(get_track_artist "${1}" "${2}")
+	TITLE=$(get_track_title "${1}" "${2}")
+
+	if [ "x${DISC}" == "x" ]; then
+		FILE="$(printf %02d ${2}) - ${TITLE}.${EXT}"
+		${TOOL} --clear "${3}"
+		${TOOL} -2 -a "${ARTIST}" -g "${GENRE}" -b "${ALBUM}" -n "$(printf %02d ${2})" -t "${TITLE}" -y "${YEAR}" "${3}" || die "Failed to tag track."
+	else
+		FILE="${DISC}.$(printf %02d ${2}) - ${TITLE}.${EXT}"
+		${TOOL} --clear "${3}"
+		${TOOL} -2 -a "${ARTIST}" -g "${GENRE}" -b "${ALBUM}" -n "$(printf %02d ${2})" -d "${DISC}" -t "${TITLE}" -y "${YEAR}" "${3}" || die "Failed to tag track."
+	fi
+
+	FRONT="${DIR}/${BASE}"
+	if [ -e "${FRONT}.png" ]; then
+		${TOOL} --cover "${FRONT}.png" "${3}" || die "Could not add cover art to track: ${FRONT}.png to ${3}"
+	elif [ -e "${FRONT}.jpg" ]; then
+		${TOOL} --cover "${FRONT}.jpg" "${3}" || die "Could not add cover art to track: ${FRONT}.jpg to ${3}"
+	fi
+
+	BACK="${DIR}/${BASE} - Back"
+	if [ -e "${BACK}.png" ]; then
+		${TOOL} --cover-back "${BACK}.png" "${3}" || die "Could not add back cover art to track: ${BACK}.png to ${3}"
+	elif [ -e "${BACK}.jpg" ]; then
+		${TOOL} --cover-back "${BACK}.jpg" "${3}" || die "Could not add back cover art to track: ${BACK}.jpg to ${3}"
+	fi
+
+	ls "${DIR}" | egrep '(png|jpg)$' | while read LEAF; do
+		echo "${LEAF}" | egrep -q " - Leaflet( [0-9]+)?\.(png|jpg|gif)$"
+		LEAFBASE=$(basename "${LEAF}" | sed "s/ - Leaflet\( [0-9]\+\)\?\.\(png\|jpg\)$//g")
+		if [ $? -eq 0 ] && [ "${BASE}" == "${LEAFBASE}" ]; then
+			${TOOL} --leaflet "${LEAF}" "${3}" || die "Could not add leaflet art to track: ${LEAF} to ${3}"
+		fi
+	done
+
+	mv "${3}" "${TMP}/${FILE}" || die "Failed to move track: ${3} to ${TMP}/${FILE}"
+	echo "${FILE}"
+}
+
+ARTIST=$(get_album_artist "${CUE}")
+ALBUM=$(get_album_title "${CUE}")
+DEST="${LIBRARY}/${ARTIST}"
+if ! [ "x${ALBUM}" == "x" ]; then
+	DEST="${DEST}/${ALBUM}"
+fi
+mkdir -p "${DEST}" || die "Failed to make album directory: ${DEST}"
+echo "Album directory: ${DEST}"
+
+echo "Splitting archive..."
+split "${CUE}"
+ls "${TMP}" | egrep '^split-track[0-9]{2}\.wav$' | while read WAV; do
+	TRACK=$(echo "${WAV}" | sed -e "s/^split-track//g" -e "s/\.[^\.]\+$//g")
+	echo "Processing track: ${TRACK}"
+	FILE=$(encode "${TMP}/${WAV}")
+	rm -f "${TMP}/${WAV}"
+	FILE=$(tag "${CUE}" "${TRACK}" "${TMP}/${FILE}")
+	mv "${TMP}/${FILE}" "${DEST}/${FILE}" || die "Failed to move track: ${TMP}/${FILE} to ${DEST}/${FILE}"
+	echo "Track complete: ${FILE}"
+done
+
+echo "Cleaning up..."
+rm -rf "${TMP}" || die "Failed to remove temp directory: ${TMP}"
+echo "Done."
+
