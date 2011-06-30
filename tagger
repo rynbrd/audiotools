@@ -1,0 +1,434 @@
+#!/bin/env ruby
+
+require 'optparse'
+require 'escape'
+require 'id3lib'
+
+class ID3Version
+	ANY = 0
+	V1 = 1
+	V2 = 2
+end
+
+class FlacMeta
+	attr_accessor :file, :fields, :pictures
+
+	def execute(cmd, split=true, ignore=false)
+		out = %x[#{cmd}]
+		if $?.to_i == 32512
+			raise "Cound not find command: %s" % [opts[0]]
+		elsif $?.to_i != 0 and not ignore
+			raise "Failed to execute metaflac: %s" % cmd
+		else
+			out = out.split("\n") if split
+			return out
+		end
+	end
+
+	def initialize(file)
+		@file = file
+		@fields = {}
+		@pictures = []
+
+		cmd = "metaflac --export-tags=- %s" % [Escape.shell_command(file)]
+		execute(cmd).each do |line|
+			field = line.split("=", 2)
+			@fields[field[0]] = field[1]
+		end
+
+		picture = nil
+		cmd = "metaflac --list --block-type=PICTURE %s | " % [Escape.shell_command(file)]
+		cmd += "egrep '^(METADATA)|([ ]{2}type: |MIME type: |description: |width: |height: |depth: )' | "
+		cmd += "egrep -v '^  type: 6 \(PICTURE\)$'"
+		execute(cmd, true, true).each do |line|
+			if /^METADATA block #[0-9]+$/.match(line)
+				@pictures << picture if picture != nil
+				id = line.gsub(/^METADATA block #/, "").to_i
+				cmd = "metaflac --block-number=%s --export-picture-to=- %s" % [id, Escape.shell_command(file)]
+				data = execute(cmd, false)
+				picture = {
+					:block => id,
+					:data  => data
+				}
+			elsif picture != nil
+				picture[:type] = line.gsub(/(^[ ]{2}type: )|( \(.*\))/, "").to_i if /^[ ]{2}type: /.match(line)
+				picture[:mime] = line.gsub(/^[ ]{2}MIME type: /, "") if /^[ ]{2}MIME type: /.match(line)
+				picture[:description] = line.gsub(/^[ ]{2}description: /, "") if /^[ ]{2}description: /.match(line)
+				picture[:width] = line.gsub(/^[ ]{2}width: /, "").to_i if /^[ ]{2}width: /.match(line)
+				picture[:height] = line.gsub(/^[ ]{2}height: /, "").to_i if /^[ ]{2}height: /.match(line)
+				picture[:depth] = line.gsub(/^[ ]{2}depth: /, "").to_i if /^[ ]{2}depth: /.match(line)
+			end
+		end
+		@pictures << picture if picture != nil
+	end
+
+	def clear(padding=false)
+		if padding
+			cmd = "metaflac --remove-all --dont-use-padding %s" % [Escape.shell_command(@file)]
+		else
+			cmd = "metaflac --remove-all %s" % [Escape.shell_command(@file)]
+		end
+		execute(cmd)
+	end
+
+	def update()
+		@pictures.each do |picture|
+			if picture.has_key?(:file) and not File.readable?(picture[:file])
+				raise "Could not read image file: %s" % [picture[:file]]
+			end
+		end
+
+		clear
+		opts = []
+		@fields.keys.each do |key|
+			if @fields[key] == nil
+				opts << Escape.shell_command('--remove-tag=%s' % [key])
+			else
+				opts << Escape.shell_command('--set-tag=%s=%s' % [key, @fields[key]])
+			end
+		end
+		@pictures.each do |picture|
+			begin
+				tf = nil
+				if not picture.has_key?(:file)
+					tf = Tempfile.open('flacmeta')
+					picture[:file] = tf.path
+				end
+				opts << Escape.shell_command('--import-picture-from=%d|%s|%s||%s' %
+					[picture[:type], picture[:mime], picture[:description], picture[:file]])
+			ensure
+				if tf != nil
+					tf.close
+					tf.unlink
+				end
+			end
+		end
+		cmd = "metaflac %s %s" % [opts.join(" "), Escape.shell_command(@file)]
+		execute(cmd)
+	end
+end
+
+def get_mime(file)
+	mime = %x[file -b --mime-type #{file}]
+	if $?.to_i == 0
+		mime.strip!
+		return mime
+	else
+		return nil
+	end
+end
+
+def get_options()
+	
+	options = {
+		:list       => false,
+		:update     => false,
+		:id3version => ID3Version::ANY,
+		:clear      => false
+	}
+
+	tags = {}
+	artwork = {
+		:images => [],
+		:clear  => false
+	}
+
+	optparse = OptionParser.new do |opts|
+		opts.banner = "usage: tagger [OPTIONS] FILE"
+
+		opts.on('-l', '--list', 'List the metadata on the file.') do
+			options[:list] = true
+		end
+
+		opts.on('-1', '--id3v1-only', 'Operate only on ID3v1. Ignored for anything not an MP3.') do
+			options[:id3version] = ID3Version::V1
+		end
+
+		opts.on('-2', '--id3v2-only', 'Operate only on ID3v2. Ignored for anything not an MP3.') do
+			options[:id3version] = ID3Version::V2
+		end
+
+		opts.on('-a', '--artist [ARTIST]', 'Set or clear the artist.') do |artist|
+			tags[:artist] = artist
+		end
+
+		opts.on('-g', '--genre [GENRE]', 'Set or clear the genre.') do |genre|
+			tags[:genre] = genre
+		end
+
+		opts.on('-b', '--album [ALBUM]', 'Set or clear the album name.') do |album|
+			tags[:album] = album
+		end
+
+		opts.on('-n', '--track [TRACK]', 'Set or clear the track number.') do |track|
+			tags[:track] = track
+		end
+
+		opts.on('-d', '--disc [DISC]', 'Set or clear the disc number.') do |disc|
+			tags[:disc] = disc
+		end
+
+		opts.on('-t', '--title [TITLE]', 'Set or clear the track title.') do |title|
+			tags[:title] = title
+		end
+
+		opts.on('-y', '--year [YEAR]', 'Set or clear the year.') do |year|
+			tags[:year] = year
+		end
+
+		opts.on('-c', '--comment [COMMENT]', 'Set or clear the comment.') do |comment|
+			tags[:comment] = comment
+		end
+
+		opts.on('--cover IMAGE', 'Add front cover art.') do |image|
+			artwork[:images] << {
+				:type  => 3,
+				:image => image
+			}
+		end
+
+		opts.on('--cover-back IMAGE', 'Add back cover art.') do |image|
+			artwork[:images] << {
+				:type  => 4,
+				:image => image
+			}
+		end
+
+		opts.on('--leaflet IMAGE', 'Add leaflet artwork.') do |image|
+			artwork[:images] << {
+				:type  => 5,
+				:image => image
+			}
+		end
+
+		opts.on('--clear', 'Remove all tags including artwork.') do
+			options[:clear] = true
+		end
+
+		opts.on('--clear-art', 'Remove all artwork.') do
+			artwork[:clear] = true
+		end
+
+		opts.on('-h', '--help', 'Display this help message') do
+			puts opts
+			exit 0
+		end
+	end
+
+	rem = optparse.permute!
+
+	if rem.count != 1
+		$stderr.puts "No input file given."
+		exit 1
+	end
+
+	options[:file] = rem[0]
+	if tags.count + artwork[:images].count > 0 or artwork[:clear] == true
+		options[:update] = true
+		options[:tags] = tags
+		options[:artwork] = artwork
+	end
+
+	if not options[:list] and not options[:update] and not options[:clear]
+		$stderr.puts "Nothing to do, exiting."
+		exit 0
+	end
+
+	if options[:list] and not File.readable?(options[:file])
+		$stderr.puts "File is not readable: %s" % [options[:file]]
+		exit 1
+	end
+
+	if options[:update] and not File.writable?(options[:file])
+		$stderr.puts "File is not writable: %s" % [options[:file]]
+		exit 1
+	end
+
+	mime = get_mime(options[:file])
+	if mime == nil
+		$stderr.puts("Could not retrieve mime type from file.")
+		$stderr.puts("Please ensure the 'file' command is available in your PATH.")
+		exit 1
+	end
+	ext = options[:file].downcase.gsub(/^.*\./, '')
+
+	options[:type] = case
+	when mime == 'audio/x-flac' then 'flac'
+	when (mime == 'application/octet-stream' and ext == 'mp3') then 'id3'
+	else
+		nil
+	end
+
+	if options[:type] == nil
+		$stderr.puts "Unsupported file type: %s" % [options[:file]]
+		exit 1
+	end
+
+	return options
+end
+
+def process(options)
+	if options[:clear]
+		if options[:type] == 'flac'
+			clear_flac(options[:file])
+		elsif
+			clear_id3(options[:file])
+		end
+	elsif options[:update]
+		if options[:type] == 'flac'
+			update_flac(options[:file], options[:tags], options[:artwork])
+		elsif options[:type] == 'id3'
+			update_id3(options[:file], options[:tags], options[:artwork], options[:id3version])
+		end
+	end
+	if options[:list]
+		if options[:type] == 'flac'
+			list_flac(options[:file])
+		elsif options[:type] == 'id3'
+			list_id3(options[:file])
+		end
+	end	
+end
+
+def clear_flac(file)
+	fm = FlacMeta.new(file)
+	fm.clear(true)
+end
+
+def clear_id3(file)
+	id3 = ruby::Tag.new(file)
+	id3.strip!
+end
+
+def update_flac(file, tags, artwork)
+	fm = FlacMeta.new(file)
+	tags.keys.each do |key|
+		case key
+		when :artist then fm.fields[:ARTIST] = tags[key]
+		when :album then fm.fields[:ALBUM] = tags[key]
+		when :genre then fm.fields[:GENRE] = tags[key]
+		when :track then fm.fields[:TRACKNUMBER] = tags[key]
+		when :disc then fm.fields[:DISCNUMBER] = tags[key]
+		when :title then fm.fields[:TITLE] = tags[key]
+		when :year then fm.fields[:DATE] = tags[key]
+		when :comment
+			fm.fields[:COMMENT] = tags[key]
+			fm.fields[:DESCRIPTION] = tags[key]
+		end
+	end
+	artwork[:images].each do |art|
+		if not File.readable?(art[:image])
+			$stderr.puts "Image file not readable: %s" % [art[:image]]
+			exit 1
+		end
+		fm.artwork << {
+			:type => art[:type],
+			:file => art[:image]
+		}
+	end
+	fm.update
+end
+
+def update_id3(file, tags, artwork, version)
+	id3 = ruby::Tag.new(file)
+	tags.keys.each do |key|
+		case key
+		when :artist then id3.artist = tags[key]
+		when :album then id3.album = tags[key]
+		when :genre then id3.genre = tags[key]
+		when :track then id3.track = tags[key]
+		when :disc then id3.disc = tags[key]
+		when :title then id3.title = tags[key]
+		when :year then id3.year = tags[key]
+		when :comment then id3.comment = tags[key]
+		end
+	end
+	if artwork[:clear]
+		id3.delete_if { |frame| frame[:id] == :APIC }
+	end
+	artwork[:images].each do |art|
+		if not File.readable?(art[:image])
+			$stderr.puts "Image file not readable: %s" % [art[:image]]
+			exit 1
+		end
+		mime = %x[file -b --mime-type #{art[:image]}]
+		mime.strip!
+		if mime != 'image/jpeg' and mime != 'image/png'
+			$stderr.puts "Invalid image format: %s" % [mime]
+			exit 1
+		end
+		id3 << {
+			:id          => :APIC,
+			:picturetype => art[:type],
+			:data        => File.read(art[:image]),
+			:mimetype    => mime
+		}
+	end
+	v = case version
+	when ID3Version::V1 then ID3Lib::V1
+	when ID3Version::V2 then ID3Lib::V2
+	else ID3Lib::V_ALL
+	end
+	id3.update!(v)
+end
+
+def print_tag(name, value)
+	puts "%s=%s" % [name, value]
+end
+
+def list_flac(file)
+	fm = FlacMeta.new(file)
+	print_tag('ARTIST', fm.fields["ARTIST"]) if fm.fields.has_key?("ARTIST")
+	print_tag('ALBUM', fm.fields["ALBUM"]) if fm.fields.has_key?("ALBUM")
+	print_tag('GENRE', fm.fields["GENRE"]) if fm.fields.has_key?("GENRE")
+	print_tag('TRACK', fm.fields["TRACKNUMBER"]) if fm.fields.has_key?("TRACKNUMBER")
+	print_tag('DISC', fm.fields["DISCNUMBER"]) if fm.fields.has_key?("DISCNUMBER")
+	print_tag('TITLE', fm.fields["TITLE"]) if fm.fields.has_key?("TITLE")
+	print_tag('YEAR', fm.fields["DATE"]) if fm.fields.has_key?("DATE")
+	print_tag('COMMENT', fm.fields["COMMENT"]) if fm.fields.has_key?("COMMENT")
+end
+
+def list_id3(file)
+	id3 = ID3Lib::Tag.new(file)
+	print_tag('ARTIST', id3.artist) if id3.artist != nil
+	print_tag('ALBUM', id3.album) if id3.album != nil
+	print_tag('GENRE', id3.genre) if id3.genre != nil
+	print_tag('TRACK', id3.track) if id3.track != nil
+	print_tag('DISC', id3.disc) if id3.disc != nil
+	print_tag('TITLE', id3.title) if id3.title != nil
+	print_tag('YEAR', id3.year) if id3.year != nil
+	print_tag('COMMENT', id3.comment) if id3.comment != nil
+end
+
+def test()
+	fm = FlacMeta.new('test.flac')
+	fm.fields[:ARTIST] = "Audio Karate"
+	fm.fields[:ALBUM] = "Space Camp"
+	fm.fields[:GENRE] = "Punk"
+	fm.fields[:YEAR] = "2002"
+	fm.fields[:TRACK] = "01"
+	fm.fields[:TITLE] = "Rosemead"
+	fm.pictures << {
+		:type => 3,
+		:file => 'test.jpg'}
+	fm.update
+
+	fm.fields.keys.each { |key| puts "name: %s, value: %s" % [key, fm.fields[key]] }
+
+	fm.pictures.each do |picture|
+		puts "picture:"
+		picture.keys.each do |key|
+			if key == :data
+				puts "  %s: <binary data>" % [key]
+			else
+				puts "  %s: %s" % [key, picture[key]]
+			end
+		end
+	end
+end
+
+if __FILE__ == $0
+	opts = get_options()
+	process(opts)
+end
+

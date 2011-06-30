@@ -1,0 +1,240 @@
+#!/bin/sh
+#
+# A collection of useful functions for managing audio files.
+
+if [ "$(basename $0)" == "track-tools.sh" ]; then
+	echo "Do not call track-tools directly."
+	exit 1
+fi
+
+# usage: find_tool BIN
+# Output the full path to a binary.
+find_tool() {
+	TOOL=$((realpath "${1}" 2> /dev/null) || (whereis "${1}" | sed -e "s/^${1}:[ ]*//g" -e "s/ .*$//g"))
+	if [ "x${TOOL}" == "x" ]; then
+		echo "could not find ${1}" >&2
+		return 1
+	fi
+	echo ${TOOL}
+	return 0
+}
+
+# usage: get_album_info CUEFILE ITEM
+# Get album level info from a cue file.
+get_album_info() {
+	if ! [ -e "${1}" ]; then
+		echo "Cue file not found: ${1}" >&2
+		return 1
+	fi
+	if [ "x${2}" == "x" ]; then
+		echo "No item given to get_album_info" >&2
+		return 1
+	fi
+	cat "${1}" | egrep "^${2} .*" | sed -e "s/^${2} [ ]*//g" -e "s/[ ]*$//g"
+}
+
+# usage: get_album_file CUEFILE
+# Get the album archive file name from a cue file.
+get_album_file() {
+	get_album_info "${1}" "FILE" | sed -e 's/^[ ]*"//g' -e 's/"[ ]\+WAVE[ ]*$//g'
+}
+
+# usage: get_album_performer CUEFILE
+# Get album artist from a cue file.
+get_album_artist() {
+	get_album_info "${1}" "PERFORMER" | sed -e 's/^[ ]*"//g' -e 's/"[ ]*$//g'
+}
+
+# usage: get_album_title CUEFILE
+# Get album title from a cue file.
+get_album_title() {
+	get_album_info "${1}" "TITLE" | sed -e 's/^[ ]*"//g' -e 's/"[ ]*$//g'
+}
+
+# usage: get_album_genre CUEFILE
+# Get album genre from a cue file.
+get_album_genre() {
+	get_album_info "${1}" "REM GENRE"
+}
+
+# usage: get_album_tracks CUEFILE
+# Print track numbers in a cue file.
+get_album_tracks() {
+	if ! [ -e "${1}" ]; then
+		echo "Cue file not found: ${1}" >&2
+		return 1
+	fi
+	egrep '^[ ]{2}TRACK[ ]+[0-9]+ .*$' "${1}" | sed -e 's/^[ ]\{2\}TRACK[ ]\+[0]*//g' -e 's/[ ]\+.*$//g'
+}
+
+# usage: get_track_info CUEFILE TRACKNUM ITEM
+# Get track level info from a cue file
+get_track_info() {
+	if ! [ -e "${1}" ]; then
+		echo "Cue file not found: ${1}" >&2
+		return 1
+	fi
+	if [ "x${2}" == "x" ]; then
+		echo "No track number given to get_track_info" >&2
+		return 1
+	fi
+	if [ "x${3}" == "x" ]; then
+		echo "No item given to get_track_info" >&2
+		return 1
+	fi
+	TRACK=$(echo ${2} | sed -e 's/[^0-9]//g' -e 's/^0//g')
+	if [ "x${TRACK}" == "x" ]; then
+		echo "Invalid track number: ${2}" >&2
+		return 1
+	fi
+
+	IFS=""
+	READ=0
+	NEXT=$((${TRACK}+1))
+
+	cat "${1}" | while read -r LINE; do
+		if [ $READ -eq 0 ]; then
+			echo "${LINE}" | egrep -q "^[ ]{2}TRACK $(printf %02d ${TRACK}) .*$"
+			test $? -eq 0 && READ=1
+		else
+			echo "${LINE}" | egrep -q "^[ ]{2}TRACK $(printf %02d ${NEXT}) .*$"
+			test $? -eq 0 && return 0
+			INFO=$(echo "${LINE}" | egrep "^[ ]{4}${3} ")
+			if [ $? -eq 0 ]; then
+				echo ${INFO} | sed "s/^[ ]\{4\}${3}[ ]*//g"
+				return 0
+			fi
+		fi
+	done
+}
+
+# usage: get_track_performer CUEFILE TRACKNUM
+# Get the track artist from a track in a cue file.
+get_track_artist() {
+	get_track_info "${1}" "${2}" "PERFORMER" | sed -e 's/^[ ]*"//g' -e 's/"[ ]*$//g'
+}
+
+# usage: get_track_title CUEFILE TRACKNUM
+# Get the track title from a track in a cue file.
+get_track_title() {
+	get_track_info "${1}" "${2}" "TITLE" | sed -e 's/^[ ]*"//g' -e 's/"[ ]*$//g'
+}
+
+# usage: get_track_times CUEFILE
+# Output the track start times. Pregaps are appended to the previous track.
+get_track_times() {
+	OPTS="--append-gaps --input-format=cue"
+	TOOL=$(find_tool cuebreakpoints)
+	test $? -eq 0 || return 1
+	if ! [ -e "${1}" ]; then
+		echo "Cue file not found: ${1}" >&2
+		return 1
+	fi
+	BREAKS=$(${TOOL} ${OPTS} "${1}" 2> /dev/null)
+	if [ "x${BREAKS}" == "x" ]; then
+		echo "Nothing read from cue file: ${1}" >&2
+		return 1
+	fi
+	${TOOL} ${OPTS} "${1}" 2> /dev/null
+	return 0
+}
+
+# usage: get_file_type AUDIOFILE
+# Print the type of audio file: flac, wav, mp3. Only checks the file extension.
+get_file_type() {
+	if ! [ -e "${1}" ]; then
+		echo "Audio file not found: ${1}" >&2
+		return 1
+	fi
+	EXT=$(echo "${1}" | sed 's/^.*\.//g')
+	case ${EXT} in
+	flac|mp3|wav)
+		echo ${EXT}
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+# usage: split_tracks AUDIOFILE < TRACKTIMES
+#		 split_tracks AUDIOFILE TRACKTIMEFILE
+# Split an audio file at the given times.
+split_tracks() {
+	OPTS="-q -O always -o wav"
+	TOOL=$(find_tool shntool)
+	test $? -eq 0 || return 1
+	if ! [ -e "${1}" ]; then
+		echo "Audio file not found: ${1}" >&2
+		return 1
+	fi
+	if ! [ "x${2}" == "x" ]; then
+		if ! [ -e "${2}" ]; then
+			echo "Track time file not found: ${1}" >&2
+			return 1
+		fi
+		${TOOL} split ${OPTS} -f "${2}" -- "${1}"
+	else
+		cat | ${TOOL} split ${OPTS} -- "${1}"
+	fi
+	if ! [ $? -eq 0 ]; then
+		echo "Failed to split audio file: ${1}" >&2
+		return 1
+	fi
+	return 0
+}
+
+# usage: get_file_tag AUDIOFILE TAGNAME
+# Get a tag from an audio file.
+get_file_tag() {
+	OPTS="-l"
+	TOOL=$(find_tool tagger)
+	test $? -eq 0 || return 1
+	if ! [ -e "${1}" ]; then
+		echo "Audio file not found: ${1}" >&2
+		return 1
+	fi
+	if ! [ "x${2}" == "x" ]; then
+		echo "Must provide a tag name" >&2
+		return 1
+	fi
+	${TOOL} ${OPTS} "${1}" | egrep "^${2}=" | sed "s/^${2}=//g"
+}
+
+# usage: get_file_artist AUDIOFILE
+# Get the tagged artist from a file.
+get_file_artist() {
+	get_file_tag "${1}" ARTIST
+}
+
+# usage: get_file_album AUDIOFILE
+# Get the tagged album from a file.
+get_file_album() {
+	get_file_tag "${1}" ALBUM
+}
+
+# usage: get_file_genre AUDIOFILE
+# Get the tagged genre from a file.
+get_file_genre() {
+	get_file_tag "${1}" GENRE
+}
+
+# usage: get_file_track AUDIOFILE
+# Get the tagged track number from a file.
+get_file_track() {
+	get_file_tag "${1}" TRACK | sed "s/^0\+//g"
+}
+
+# usage: get_file_title
+# Get the tagged title from a file.
+get_file_title() {
+	get_file_tag "${1}" TITLE
+}
+
+# usage: get_file_year
+# Get the tagged year from a file.
+get_file_year() {
+	get_file_tag "${1}" YEAR
+}
+
