@@ -6,20 +6,6 @@
 DEBUG=1
 . $(dirname $0)/track-tools
 
-if [ "x${1}" == "x" ]; then
-	echo "usage: $(basename $0) archive"
-	echo "Performs sanity checks against a music archive directory."
-	exit 1
-fi
-
-test -d "${1}" || die "Invalid archive directory: ${1}"
-
-HERE=$(pwd)
-ARCHIVE=$(realpath "${1}")
-info "Using archive: '${ARCHIVE}'"
-
-pushd "${ARCHIVE}" &> /dev/null
-
 # usage: get_art_base FILE TYPE
 get_art_base() {
 	ART=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
@@ -133,30 +119,47 @@ check_log() {
 	test -e "${LOG_BASE}.cue" || error "Log has no cue file: '${1}'"
 }
 
-ls | while read ARTIST; do
-	test -d "${ARTIST}" || warn "Not a directory: ${ARTIST}"
-	pushd "${ARTIST}" &> /dev/null
-	if [ $? -eq 0 ]; then
-		info "Checking artist: ${ARTIST}"
-		ls | while read FILE; do
-			TYPE=$(get_file_type "${FILE}")
-			if [ $? -eq 0 ]; then
-				test "${TYPE}" == "cue" && check_cue "${FILE}" "${ARTIST}"
-				test "${TYPE}" == "flac" && check_archive "${FILE}"
-				test "${TYPE}" == "log" && check_log "${FILE}"
-				test "${TYPE}" == "cover" && check_cover "${FILE}"
-				test "${TYPE}" == "cover-back" && check_cover_back "${FILE}"
-				test "${TYPE}" == "leaflet" && check_leaflet "${FILE}"
-			else
-				warn "Unrecognized file: '${FILE}'"
-			fi
-		done
-	else
-		error "Could not enter directory: ${ARTIST}"
+SCRIPT_NAME=$(basename "${0}")
+if [ "x${SCRIPT_NAME}" == "xarccheck" ]; then
+	if [ "x${1}" == "x" ]; then
+		echo "usage: $(basename $0) archive"
+		echo "Performs sanity checks against a music archive directory."
+		exit 1
 	fi
-	popd &> /dev/null
-done
 
-popd &> /dev/null
-exit 0
+	test -d "${1}" || die "Invalid archive directory: ${1}"
+
+	HERE=$(pwd)
+	ARCHIVE=$(realpath "${1}")
+	info "Using archive: '${ARCHIVE}'"
+
+	pushd "${ARCHIVE}" &> /dev/null
+
+	ls | while read ARTIST; do
+		test -d "${ARTIST}" || warn "Not a directory: ${ARTIST}"
+		pushd "${ARTIST}" &> /dev/null
+		if [ $? -eq 0 ]; then
+			info "Checking artist: ${ARTIST}"
+			ls | while read FILE; do
+				TYPE=$(get_file_type "${FILE}")
+				if [ $? -eq 0 ]; then
+					test "${TYPE}" == "cue" && check_cue "${FILE}" "${ARTIST}"
+					test "${TYPE}" == "flac" && check_archive "${FILE}"
+					test "${TYPE}" == "log" && check_log "${FILE}"
+					test "${TYPE}" == "cover" && check_cover "${FILE}"
+					test "${TYPE}" == "cover-back" && check_cover_back "${FILE}"
+					test "${TYPE}" == "leaflet" && check_leaflet "${FILE}"
+				else
+					warn "Unrecognized file: '${FILE}'"
+				fi
+			done
+		else
+			error "Could not enter directory: ${ARTIST}"
+		fi
+		popd &> /dev/null
+	done
+
+	popd &> /dev/null
+	exit 0
+fi
 
