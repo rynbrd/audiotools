@@ -1,0 +1,142 @@
+#!/bin/sh
+#
+# usage: arccheck ARCHIVE
+# A tool for checking the sanity of an entire music archive.
+
+DEBUG=1
+. $(dirname $0)/track-tools
+
+if [ "x${1}" == "x" ]; then
+	echo "usage: $(basename $0) archive"
+	echo "Performs sanity checks against a music archive directory."
+	exit 1
+fi
+
+test -d "${1}" || die "Invalid archive directory: ${1}"
+
+HERE=$(pwd)
+ARCHIVE=$(realpath "${1}")
+info "Using archive: '${ARCHIVE}'"
+
+pushd "${ARCHIVE}" &> /dev/null
+
+# usage: get_art_base FILE TYPE
+get_art_base() {
+	ART=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
+	if [ "${2}" == "cover" ]; then
+		echo "${ART}"
+	elif [ "${2}" == "cover-back" ]; then
+		echo "${ART}" | sed "s/ - Back$//g"
+	elif [ "${2}" == "leaflet" ]; then
+		echo "${ART}" | sed "s/ - Leaflet\( [0-9]\+\)\?$//g"
+	else
+		return 1
+	fi
+	return 0
+}
+
+# usage: get_file_type FILE
+get_file_type() {
+	echo "${1}" | egrep -q "\.cue$" && echo "cue" && return 0
+	echo "${1}" | egrep -q "\.flac$" && echo "flac" && return 0
+	echo "${1}" | egrep -q " - Back\.(jpg|png)$" && echo "cover-back" && return 0
+	echo "${1}" | egrep -q " - Leaflet( [0-9]+)\.(jpg|png)$" && echo "leaflet" && return 0
+	echo "${1}" | egrep -q "\.(jpg|png)$" && echo "cover" && return 0
+	return 1
+}
+
+# usage: check_cue FILE ARTIST
+check_cue() {
+	info "Checking CUE file: ${1}"
+	CUE_ARTIST=$(get_album_artist "${1}")
+	CUE_ALBUM=$(get_album_title "${1}")
+	CUE_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
+	FILE=$(get_album_file "${1}")
+	FILE_BASE=$(echo "${FILE}" | sed "s/\.[^\.]\+$//g")
+	FILE_EXT=$(echo "${FILE}" | sed "s/^.\+\.//g")
+
+	test "x${2}" == "x${CUE_ARTIST}" || error "  Cue directory misnamed: expected '${2}', got '${CUE_ARTIST}'"
+	test "x${CUE_BASE}" == "x${CUE_ALBUM}" || error "  Cue file misnamed: expected '${CUE_ALBUM}.cue'"
+	test "x${FILE_BASE}" == "x${CUE_ALBUM}" || error "  Archive file misnamed: expected '${CUE_ALBUM}.${FILE_EXT}', got '${FILE}'"
+
+	if [ -e "${FILE}" ]; then
+		FILE_TITLE=$(get_file_title "${FILE}")
+		FILE_ARTIST=$(get_file_artist "${FILE}")
+		FILE_ALBUM=$(get_file_album "${FILE}")
+		FILE_GENRE=$(get_file_genre "${FILE}")
+		FILE_YEAR=$(get_file_year "${FILE}")
+		FILE_COMMENT=$(get_file_comment "${FILE}")
+		CUE_GENRE=$(get_album_genre "${1}")
+		CUE_YEAR=$(get_album_year "${1}")
+
+		test "x${FILE_TITLE}" == "x" || error "  Archive file has title: ${FILE_TITLE}"
+		test "x${FILE_ARTIST}" == "x${CUE_ARTIST}" || error "  Archive file has wrong artist: expected '${CUE_ARTIST}' got '${FILE_ARTIST}'"
+		test "x${FILE_ALBUM}" == "x${CUE_ALBUM}" || error "  Archive file has wrong album: expected '${CUE_ALBUM}' got '${FILE_ALBUM}'"
+		test "x${FILE_GENRE}" == "x${CUE_GENRE}" || error "  Archive file has wrong genre: expected '${CUE_GENRE}' got '${FILE_GENRE}'"
+		test "x${FILE_YEAR}" == "x${CUE_YEAR}" || error "  Archive file has wrong year: expected '${CUE_YEAR}' got '${FILE_YEAR}'"
+	else
+		error "  Archive file not found: ${FILE}"
+	fi
+}
+
+# usage: check_archive FILE
+check_archive() {
+	info "Checking archive file: '${1}'"
+	FILE_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
+	test -e "${FILE_BASE}.cue" || error "  Archive has no cue file: '${1}'"
+}
+
+# usage: check_art FILE BASE
+check_art() {
+	MIME=$(file -b --mime-type "${1}")
+	test -e "${2}.cue" || error "  Art has no cue file: '${1}'"
+	if ! [ "x${MIME}" == "ximage/jpeg" ] && ! [ "x${MIME}" == "ximage/png" ]; then
+		error "  Art has invalid MIME: '${MIME}'"
+	fi
+}
+
+# usage: check_cover FILE
+check_cover() {
+	info "Checking cover art file: '${1}'"
+	ART_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
+	check_art "${1}" "${ART_BASE}"
+}
+
+# usage: check_cover_back FILE
+check_cover_back() {
+	ART_BASE=$(echo "${1}" | sed -e "s/\.[^\.]\+$//g" -e "s/ - Back$//g")
+	check_art "${1}" "${ART_BASE}"
+}
+
+# usage: check_leaflet FILE
+check_leaflet() {
+	ART_BASE=$(echo "${1}" | sed -e "s/\.[^\.]\+$//g" -e "s/ - Leaflet\( [0-9]\+\)\?$//g")
+	check_art "${1}" "${ART_BASE}"
+}
+
+ls | while read ARTIST; do
+	test -d "${ARTIST}" || warn "Not a directory: ${ARTIST}"
+	pushd "${ARTIST}" &> /dev/null
+	if [ $? -eq 0 ]; then
+		info "Checking artist: ${ARTIST}"
+		ls | while read FILE; do
+			TYPE=$(get_file_type "${FILE}")
+			if [ $? -eq 0 ]; then
+				test "${TYPE}" == "cue" && check_cue "${FILE}" "${ARTIST}"
+				test "${TYPE}" == "flac" && check_archive "${FILE}"
+				test "${TYPE}" == "cover" && check_cover "${FILE}"
+				test "${TYPE}" == "cover-back" && check_cover_back "${FILE}"
+				test "${TYPE}" == "leaflet" && check_leaflet "${FILE}"
+			else
+				warn "Unrecognized file: '${FILE}'"
+			fi
+		done
+	else
+		error "Could not enter directory: ${ARTIST}"
+	fi
+	popd &> /dev/null
+done
+
+popd &> /dev/null
+exit 0
+
