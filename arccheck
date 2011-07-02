@@ -39,6 +39,7 @@ get_art_base() {
 get_file_type() {
 	echo "${1}" | egrep -q "\.cue$" && echo "cue" && return 0
 	echo "${1}" | egrep -q "\.flac$" && echo "flac" && return 0
+	echo "${1}" | egrep -q "\.log$" && echo "log" && return 0
 	echo "${1}" | egrep -q " - Back\.(jpg|png)$" && echo "cover-back" && return 0
 	echo "${1}" | egrep -q " - Leaflet( [0-9]+)\.(jpg|png)$" && echo "leaflet" && return 0
 	echo "${1}" | egrep -q "\.(jpg|png)$" && echo "cover" && return 0
@@ -50,14 +51,20 @@ check_cue() {
 	info "Checking CUE file: ${1}"
 	CUE_ARTIST=$(get_album_artist "${1}")
 	CUE_ALBUM=$(get_album_title "${1}")
+	CUE_DISC=$(get_album_disc "${1}")
 	CUE_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
 	FILE=$(get_album_file "${1}")
 	FILE_BASE=$(echo "${FILE}" | sed "s/\.[^\.]\+$//g")
 	FILE_EXT=$(echo "${FILE}" | sed "s/^.\+\.//g")
 
 	test "x${2}" == "x${CUE_ARTIST}" || error "  Cue directory misnamed: expected '${2}', got '${CUE_ARTIST}'"
-	test "x${CUE_BASE}" == "x${CUE_ALBUM}" || error "  Cue file misnamed: expected '${CUE_ALBUM}.cue'"
-	test "x${FILE_BASE}" == "x${CUE_ALBUM}" || error "  Archive file misnamed: expected '${CUE_ALBUM}.${FILE_EXT}', got '${FILE}'"
+	if ! [ "x${CUE_DISC}" == "x" ]; then
+		test "x${CUE_BASE}" == "x${CUE_ALBUM} - Disc ${CUE_DISC}" || error "  Cue file misnamed: expected '${CUE_ALBUM} - Disc ${CUE_DISC}.cue'"
+		test "x${FILE_BASE}" == "x${CUE_ALBUM} - Disc ${CUE_DISC}" || error "  Archive file misnamed: expected '${CUE_ALBUM} - Disc ${CUE_DISC}.${FILE_EXT}', got '${FILE}'"
+	else
+		test "x${CUE_BASE}" == "x${CUE_ALBUM}" || error "  Cue file misnamed: expected '${CUE_ALBUM}.cue'"
+		test "x${FILE_BASE}" == "x${CUE_ALBUM}" || error "  Archive file misnamed: expected '${CUE_ALBUM}.${FILE_EXT}', got '${FILE}'"
+	fi
 
 	if [ -e "${FILE}" ]; then
 		FILE_TITLE=$(get_file_title "${FILE}")
@@ -88,7 +95,15 @@ check_archive() {
 # usage: check_art FILE BASE
 check_art() {
 	MIME=$(file -bL --mime-type "${1}")
-	test -e "${2}.cue" || error "  Art has no cue file: '${1}'"
+	if ! [ -e "${2}.cue" ]; then
+		FOUND=0
+		ls | egrep '\.cue$' | while read CUE; do
+			CUE_ALBUM=$(get_album_title "${CUE}")
+			test "x${2}" == "x${CUE_ALBUM}" && FOUND=1
+		done
+		test ${FOUND} -eq 0 && error "  Art has no cue file: '${1}'"
+	fi
+
 	if ! [ "x${MIME}" == "ximage/jpeg" ] && ! [ "x${MIME}" == "ximage/png" ]; then
 		error "Art has invalid MIME: '${1}' has MIME '${MIME}'"
 	fi

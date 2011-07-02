@@ -55,7 +55,7 @@ get_album_year() {
 # usage: get_album_disc CUEFILE
 # Get the album disc number.
 get_album_disc() {
-	get_album_disc "${1}" "REM DISC"
+	get_album_info "${1}" "REM DISC"
 }
 
 # usage: get_album_tracks CUEFILE
