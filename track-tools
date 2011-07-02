@@ -2,32 +2,21 @@
 #
 # A collection of useful functions for managing audio files.
 
-if [ "$(basename $0)" == "track-tools.sh" ]; then
-	echo "Do not call track-tools directly."
-	exit 1
-fi
+. $(dirname $0)/common
 
-# usage: find_tool BIN
-# Output the full path to a binary.
-find_tool() {
-	TOOL=$((realpath "$(dirname "${0}")/${1}" 2> /dev/null) || (whereis "${1}" | sed -e "s/^${1}:[ ]*//g" -e "s/ .*$//g"))
-	if [ "x${TOOL}" == "x" ]; then
-		echo "Could not find ${1}." >&2
-		return 1
-	fi
-	echo ${TOOL}
-	return 0
-}
+if [ "$(basename $0)" == "track-tools" ]; then
+	die "Do not call track-tools directly."
+fi
 
 # usage: get_album_info CUEFILE ITEM
 # Get album level info from a cue file.
 get_album_info() {
 	if ! [ -e "${1}" ]; then
-		echo "Cue file not found: ${1}" >&2
+		debug "Cue file not found: ${1}"
 		return 1
 	fi
 	if [ "x${2}" == "x" ]; then
-		echo "No item given to get_album_info" >&2
+		debug "No item given to get_album_info"
 		return 1
 	fi
 	cat "${1}" | egrep "^${2} .*" | sed -e "s/^${2} [ ]*//g" -e "s/[ ]*$//g"
@@ -73,7 +62,7 @@ get_album_disc() {
 # Print track numbers in a cue file.
 get_album_tracks() {
 	if ! [ -e "${1}" ]; then
-		echo "Cue file not found: ${1}" >&2
+		debug "Cue file not found: ${1}"
 		return 1
 	fi
 	egrep '^[ ]{2}TRACK[ ]+[0-9]+ .*$' "${1}" | sed -e 's/^[ ]\{2\}TRACK[ ]\+[0]*//g' -e 's/[ ]\+.*$//g'
@@ -83,20 +72,20 @@ get_album_tracks() {
 # Get track level info from a cue file
 get_track_info() {
 	if ! [ -e "${1}" ]; then
-		echo "Cue file not found: ${1}" >&2
+		debug "Cue file not found: ${1}"
 		return 1
 	fi
 	if [ "x${2}" == "x" ]; then
-		echo "No track number given to get_track_info" >&2
+		debug "No track number given to get_track_info"
 		return 1
 	fi
 	if [ "x${3}" == "x" ]; then
-		echo "No item given to get_track_info" >&2
+		debug "No item given to get_track_info"
 		return 1
 	fi
 	TRACK=$(echo ${2} | sed -e 's/[^0-9]//g' -e 's/^0//g')
 	if [ "x${TRACK}" == "x" ]; then
-		echo "Invalid track number: ${2}" >&2
+		debug "Invalid track number: ${2}"
 		return 1
 	fi
 
@@ -142,12 +131,12 @@ get_track_times() {
 	TOOL=$(find_tool cuebreakpoints)
 	test $? -eq 0 || return 1
 	if ! [ -e "${1}" ]; then
-		echo "Cue file not found: ${1}" >&2
+		debug "Cue file not found: ${1}"
 		return 1
 	fi
 	BREAKS=$(${TOOL} ${OPTS} "${1}" 2> /dev/null)
 	if [ "x${BREAKS}" == "x" ]; then
-		echo "Nothing read from cue file: ${1}" >&2
+		debug "Nothing read from cue file: ${1}"
 		return 1
 	fi
 	${TOOL} ${OPTS} "${1}" 2> /dev/null
@@ -158,7 +147,7 @@ get_track_times() {
 # Print the type of audio file: flac, wav, mp3. Only checks the file extension.
 get_file_type() {
 	if ! [ -e "${1}" ]; then
-		echo "Audio file not found: ${1}" >&2
+		debug "Audio file not found: ${1}"
 		return 1
 	fi
 	EXT=$(echo "${1}" | sed 's/^.*\.//g')
@@ -181,12 +170,12 @@ split_tracks() {
 	TOOL=$(find_tool shntool)
 	test $? -eq 0 || return 1
 	if ! [ -e "${1}" ]; then
-		echo "Audio file not found: ${1}" >&2
+		debug "Audio file not found: ${1}"
 		return 1
 	fi
 	if ! [ "x${2}" == "x" ]; then
 		if ! [ -e "${2}" ]; then
-			echo "Track time file not found: ${1}" >&2
+			debug "Track time file not found: ${1}"
 			return 1
 		fi
 		${TOOL} split ${OPTS} -f "${2}" -- "${1}"
@@ -194,7 +183,7 @@ split_tracks() {
 		cat | ${TOOL} split ${OPTS} -- "${1}"
 	fi
 	if ! [ $? -eq 0 ]; then
-		echo "Failed to split audio file: ${1}" >&2
+		debug "Failed to split audio file: ${1}"
 		return 1
 	fi
 	return 0
@@ -207,11 +196,11 @@ get_file_tag() {
 	TOOL=$(find_tool tagger)
 	test $? -eq 0 || return 1
 	if ! [ -e "${1}" ]; then
-		echo "Audio file not found: ${1}" >&2
+		debug "Audio file not found: ${1}"
 		return 1
 	fi
-	if ! [ "x${2}" == "x" ]; then
-		echo "Must provide a tag name" >&2
+	if [ "x${2}" == "x" ]; then
+		debug "Must provide a tag name"
 		return 1
 	fi
 	${TOOL} ${OPTS} "${1}" | egrep "^${2}=" | sed "s/^${2}=//g"
@@ -251,5 +240,11 @@ get_file_title() {
 # Get the tagged year from a file.
 get_file_year() {
 	get_file_tag "${1}" YEAR
+}
+
+# usage: get_file_comment
+# Get the tagged comment from a file.
+get_file_comment() {
+	get_file_tag "${1}" COMMENT
 }
 

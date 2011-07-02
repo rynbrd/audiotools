@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# Some common functions.
+
+if [ "$(basename $0)" == "common" ]; then
+	echo "Do not call common directly."
+	exit 1
+fi
+
+BASE_PATH=$(dirname "${0}")
+TOOL_PATH=$(realpath "${BASE_PATH}")
+
+# usage: debug ARG
+# Print a debug message to stderr.
+debug() {
+	if ! [ "x${DEBUG}" == "x" ]; then
+		echo -en "\e[01;35m" >&2
+		echo -n "${1}" >&2
+		echo -e "\e[00m" >&2
+	fi
+}
+
+# usage: info ARG
+# Print an info message to stderr.
+info() {
+	echo -en "\e[00;36m" >&2
+	echo -n "${1}" >&2
+	echo -e "\e[00m" >&2
+}
+
+# usage: warn ARG
+# Print a warning message to stderr.
+warn() {
+	echo -en "\e[01;33m" >&2
+	echo -n "${1}" >&2
+	echo -e "\e[00m" >&2
+}
+
+# usage: error ARG
+# Print an error message to stderr.
+error() {
+	echo -en "\e[01;31m" >&2
+	echo -n "${1}" >&2
+	echo -e "\e[00m" >&2
+}
+
+die() {
+	error $@
+	exit 1
+}
+
+# usage: find_tool BIN
+# Output the full path to a binary.
+find_tool() {
+	TOOL=$((realpath "${TOOL_PATH}/${1}" 2> /dev/null) || (whereis "${1}" | sed -e "s/^${1}:[ ]*//g" -e "s/ .*$//g"))
+	if [ "x${TOOL}" == "x" ]; then
+		debug "Could not find ${1}."
+		return 1
+	fi
+	echo ${TOOL}
+	return 0
+}
+
+
