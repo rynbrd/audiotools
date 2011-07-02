@@ -3,29 +3,15 @@
 # usage: dearchive CUEFILE LIBRARY
 # A tool for de-archiving a cue/flac file pair into a music library.
 
+DEBUG=1
 . $(dirname $0)/track-tools
 
-if [ "x${1}" == "x" ] || [ "x${2}" == "x" ]; then
-	echo "usage: $(basename $0) cuefile library" >&2
-	echo "De-archives a cue/flac file pair into a music library." >&2
-	exit 1
-fi
-
-test -e "${1}" || die "Can't find cue file: ${1}"
-test -e "${2}" || die "Can't find library path: ${2}"
-
-HERE=$(pwd)
-CUE=$(realpath "${1}")
-LIBRARY=$(realpath "${2}")
-TMP="${HERE}/dearchive-tmp"
-mkdir -p "${TMP}" || die "Failed to create temporary directory: ${TMP}"
-
-# usage: split CUE
+# usage: split CUE DEST
 split() {
 	FILE="$(dirname "${1}")/$(get_album_file "${1}")"
 	test -e "${FILE}" || die "Archive file not found: ${FILE}"
 	pushd "$(pwd)" &> /dev/null
-	cd "${TMP}"
+	cd "${2}"
 	get_track_times "${1}" | split_tracks "${FILE}"
 	test $? -eq 0 || exit 1
 	popd
@@ -45,7 +31,7 @@ encode() {
 	return 0
 }
 
-# usage: tag CUE TRACKNUM TRACKFILE
+# usage: tag CUE TRACKNUM TRACKFILE DEST
 tag() {
 	TOOL=$(find_tool tagger)
 	test $? -eq 0 || exit 1
@@ -93,32 +79,49 @@ tag() {
 		fi
 	done
 
-	mv "${3}" "${TMP}/${FILE}" || die "Failed to move track: ${3} to ${TMP}/${FILE}"
+	mv "${3}" "${4}/${FILE}" || die "Failed to move track: ${3} to ${4}/${FILE}"
 	echo "${FILE}"
 }
 
-ARTIST=$(get_album_artist "${CUE}")
-ALBUM=$(get_album_title "${CUE}")
-DEST="${LIBRARY}/${ARTIST}"
-if ! [ "x${ALBUM}" == "x" ]; then
-	DEST="${DEST}/${ALBUM}"
+SCRIPT_NAME=$(basename "${0}")
+if [ "x${SCRIPT_NAME}" == "xdearchive" ]; then
+	if [ "x${1}" == "x" ] || [ "x${2}" == "x" ]; then
+		echo "usage: $(basename $0) cuefile library" >&2
+		echo "De-archives a cue/flac file pair into a music library." >&2
+		exit 1
+	fi
+
+	test -e "${1}" || die "Can't find cue file: ${1}"
+	test -e "${2}" || die "Can't find library path: ${2}"
+
+	HERE=$(pwd)
+	CUE=$(realpath "${1}")
+	LIBRARY=$(realpath "${2}")
+	TMP="${HERE}/dearchive-tmp"
+	mkdir -p "${TMP}" || die "Failed to create temporary directory: ${TMP}"
+
+	ARTIST=$(get_album_artist "${CUE}")
+	ALBUM=$(get_album_title "${CUE}")
+	DEST="${LIBRARY}/${ARTIST}"
+	if ! [ "x${ALBUM}" == "x" ]; then
+		DEST="${DEST}/${ALBUM}"
+	fi
+	mkdir -p "${DEST}" || die "Failed to make album directory: ${DEST}"
+	info "Album directory: ${DEST}"
+
+	echo "Splitting archive..."
+	split "${CUE}" "${TMP}"
+	ls "${TMP}" | egrep '^split-track[0-9]{2}\.wav$' | while read WAV; do
+		TRACK=$(echo "${WAV}" | sed -e "s/^split-track//g" -e "s/\.[^\.]\+$//g")
+		info "Processing track: ${TRACK}"
+		FILE=$(encode "${TMP}/${WAV}")
+		rm -f "${TMP}/${WAV}"
+		FILE=$(tag "${CUE}" "${TRACK}" "${TMP}/${FILE}" "${TMP}")
+		mv "${TMP}/${FILE}" "${DEST}/${FILE}" || die "Failed to move track: ${TMP}/${FILE} to ${DEST}/${FILE}"
+		info "Track complete: ${FILE}"
+	done
+
+	info "Cleaning up..."
+	rm -rf "${TMP}" || die "Failed to remove temp directory: ${TMP}"
+	info "Done."
 fi
-mkdir -p "${DEST}" || die "Failed to make album directory: ${DEST}"
-echo "Album directory: ${DEST}"
-
-echo "Splitting archive..."
-split "${CUE}"
-ls "${TMP}" | egrep '^split-track[0-9]{2}\.wav$' | while read WAV; do
-	TRACK=$(echo "${WAV}" | sed -e "s/^split-track//g" -e "s/\.[^\.]\+$//g")
-	info "Processing track: ${TRACK}"
-	FILE=$(encode "${TMP}/${WAV}")
-	rm -f "${TMP}/${WAV}"
-	FILE=$(tag "${CUE}" "${TRACK}" "${TMP}/${FILE}")
-	mv "${TMP}/${FILE}" "${DEST}/${FILE}" || die "Failed to move track: ${TMP}/${FILE} to ${DEST}/${FILE}"
-	info "Track complete: ${FILE}"
-done
-
-echo "Cleaning up..."
-rm -rf "${TMP}" || die "Failed to remove temp directory: ${TMP}"
-echo "Done."
-
