@@ -81,23 +81,21 @@ check_cue() {
 
 # usage: check_archive FILE
 check_archive() {
-	info "Checking archive file: '${1}'"
 	FILE_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
-	test -e "${FILE_BASE}.cue" || error "  Archive has no cue file: '${1}'"
+	test -e "${FILE_BASE}.cue" || error "Archive has no cue file: '${1}'"
 }
 
 # usage: check_art FILE BASE
 check_art() {
-	MIME=$(file -b --mime-type "${1}")
+	MIME=$(file -bL --mime-type "${1}")
 	test -e "${2}.cue" || error "  Art has no cue file: '${1}'"
 	if ! [ "x${MIME}" == "ximage/jpeg" ] && ! [ "x${MIME}" == "ximage/png" ]; then
-		error "  Art has invalid MIME: '${MIME}'"
+		error "Art has invalid MIME: '${1}' has MIME '${MIME}'"
 	fi
 }
 
 # usage: check_cover FILE
 check_cover() {
-	info "Checking cover art file: '${1}'"
 	ART_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
 	check_art "${1}" "${ART_BASE}"
 }
@@ -114,6 +112,12 @@ check_leaflet() {
 	check_art "${1}" "${ART_BASE}"
 }
 
+# usage: check_log FILE
+check_log() {
+	LOG_BASE=$(echo "${1}" | sed "s/\.[^\.]\+$//g")
+	test -e "${LOG_BASE}.cue" || error "Log has no cue file: '${1}'"
+}
+
 ls | while read ARTIST; do
 	test -d "${ARTIST}" || warn "Not a directory: ${ARTIST}"
 	pushd "${ARTIST}" &> /dev/null
@@ -124,6 +128,7 @@ ls | while read ARTIST; do
 			if [ $? -eq 0 ]; then
 				test "${TYPE}" == "cue" && check_cue "${FILE}" "${ARTIST}"
 				test "${TYPE}" == "flac" && check_archive "${FILE}"
+				test "${TYPE}" == "log" && check_log "${FILE}"
 				test "${TYPE}" == "cover" && check_cover "${FILE}"
 				test "${TYPE}" == "cover-back" && check_cover_back "${FILE}"
 				test "${TYPE}" == "leaflet" && check_leaflet "${FILE}"
