@@ -14,7 +14,7 @@ split() {
 	cd "${2}"
 	get_track_times "${1}" | split_tracks "${FILE}"
 	test $? -eq 0 || exit 1
-	popd
+	popd &> /dev/null
 }
 
 # usage: encode WAV
@@ -112,7 +112,7 @@ if [ "x${SCRIPT_NAME}" == "xdearchive" ]; then
 	echo "Splitting archive..."
 	split "${CUE}" "${TMP}"
 	ls "${TMP}" | egrep '^split-track[0-9]{2}\.wav$' | while read WAV; do
-		TRACK=$(echo "${WAV}" | sed -e "s/^split-track//g" -e "s/\.[^\.]\+$//g")
+		TRACK=$(echo "${WAV}" | sed -e "s/^split-track\(0*\)//g" -e "s/\.[^\.]\+$//g")
 		info "Processing track: ${TRACK}"
 		FILE=$(encode "${TMP}/${WAV}")
 		rm -f "${TMP}/${WAV}"
