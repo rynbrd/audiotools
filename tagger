@@ -254,13 +254,13 @@ def get_options()
 
 	options[:type] = case
 	when mime == 'audio/x-flac' then 'flac'
-	when (mime == 'application/octet-stream' and ext == 'mp3') then 'id3'
+	when (mime == 'audio/mpeg' or (mime == 'application/octet-stream' and ext == 'mp3')) then 'id3'
 	else
 		nil
 	end
 
 	if options[:type] == nil
-		$stderr.puts "Unsupported file type: %s" % [options[:file]]
+		$stderr.puts "Unsupported file type: %s for %s" % [mime, options[:file]]
 		exit 1
 	end
 
