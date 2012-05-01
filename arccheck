@@ -4,7 +4,8 @@
 # A tool for checking the sanity of an entire music archive.
 
 DEBUG=1
-. $(dirname $0)/track-tools
+LIBPATH="$(realpath -f "$(dirname $0)/lib")"
+. "${LIBPATH}/track-tools"
 
 # usage: get_art_base FILE TYPE
 get_art_base() {

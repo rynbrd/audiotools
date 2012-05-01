@@ -2,7 +2,7 @@
 #
 # A collection of useful functions for managing audio files.
 
-. $(dirname $0)/common
+. "${LIBPATH}/common"
 
 if [ "$(basename $0)" == "track-tools" ]; then
 	die "Do not call track-tools directly."
