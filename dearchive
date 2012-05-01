@@ -4,7 +4,7 @@
 # A tool for de-archiving a cue/flac file pair into a music library.
 
 DEBUG=1
-LIBPATH="$(realpath -f "$(dirname $0)/lib")"
+LIBPATH="$(readlink -f "$(dirname $0)/lib")"
 . "${LIBPATH}/track-tools"
 
 # usage: split CUE DEST
